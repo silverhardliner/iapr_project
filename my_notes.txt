@@ -1,0 +1,116 @@
+Algorithm for the final iapr project
+
+Find backround with histogram, use mask to get the tiles
+
+Extract features
+Angles - hugh transform -> rotate all to same rotation
+Color
+Texture
+
+Cluster with color and texture
+
+Find outliers - the lonely ones
+
+Combine images from the same clusters
+- define a metric, number of edges in the combine images
+- try all posible rotations and choose the one with the least edges
+
+Export solutions
+
+Number of tiles in train pictures
+00 - 3o + 9 + 9 + 9 = 30 (the brown one solution is 4x3 but in image is only 9 brown tiles)
+01 - 2o + 9 + 16 = 27
+02 - 3o + 16 + 9 = 28
+03 - 1o + 9 + 9 = 28 (the green one is 4x3 but only 9 green in picture)
+04 - 2o ... 28
+05 - 1o ... 28
+06 - 3o ... 30
+07 - 1o ... 26
+08 - 2o ... 27
+09 - 2o ... 35
+10 - 3o ... 35
+11 - 1o ... 26
+12 - 1o ... 28
+13 - 1o ... 28
+14 - 1o ... 20
+
+Hard to segment 3, 9, 10, 13, 
+
+Try morphology
+then try maybe the hugh transform
+
+ALGORITHM OVERVIEW SO FAR
+
+rgb - get 3 channels
+
+find 3 histograms of 3 channels
+
+smooth histograms
+
+find biggest peak in histogram == the background
+
+find boundaries of the biggest peak
+
+use the boundaries to threshold the channels
+
+combine the three thresholded channels to one binary image
+
+QUESTION
+The gray doesnt work very well. What to do?
+
+QUESTION
+Do we add morphology here?
+
+Use circular filter to find squares
+
+Find peaks - filter them
+
+Biggest effect has the threshold how high peaks do we keep
+
+If the threshold is low we keep the peaks for gray but we also keep some noise peaks
+
+QUESTION
+Do we use higher peak threshold or How to filter the noise peaks out?
+
+Maybe we can use square filter with rotations and small translation around the peaks to find if there is a square?
+
+And also to find the best position and rotation and with that information cut it out.
+
+Maybe we can do the same as with the peaks. Travel a rotate and try to find the best fit starting from the peak.
+But that will be done on the binary image with the information about peaks.
+
+RESULTS
+very good 0 1 2
+
+FEATURE EXTRACTION
+0 - color
+1 - 
+
+UPDATE
+kombinuju gray a value kanal
+ted jsem nenasel zadny chyby jenom input num 7 je ten jeden ctverec u rohu a closeholes tam vyplni tu diru
+takze se mi tim posune centroid, ale jinak to vypada hodne v topu
+precijen tohle je jeden ctverecek :D
+
+reseni - dat padding, potom morphology, padding pryc
+
+PIPELINE
+1. original image
+2. gray, hsv value
+3. log edge
+4. pad
+5. morphology
+6. logical OR of morph gray and morph value
+7. unpad
+8. circle filter
+9. find centroids from peaks
+10. Canny edge
+11. probabilistic hough line
+12. Angles
+13. Generate square points
+14. crop images out
+15. rotate
+16. fix edge background fragments
+
+Improve image resolution
+cubic spline
