@@ -316,12 +316,12 @@ class Segmentation:
 
         return output_image
     
-    def plot_images(images):
+    def plot_images(images, title="Cropped images", cmap=None):
         num_images = len(images)
         rows = (num_images + 7) // 8  # Calculate the number of rows based on the number of images
 
         fig, axes = plt.subplots(rows, 8, figsize=(12, rows * 1.5))
-        fig.suptitle("Cropped images")
+        fig.suptitle(title)
 
         # Turn off the axes for all subplots
         for ax in axes.flatten():
@@ -333,7 +333,7 @@ class Segmentation:
             col_idx = i % 8   # Column index
 
             # Plot the image in the corresponding subplot
-            axes[row_idx, col_idx].imshow(image)
+            axes[row_idx, col_idx].imshow(image, cmap=cmap)
         
         # Adjust spacing between subplots
         plt.tight_layout()
