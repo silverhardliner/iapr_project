@@ -1,0 +1,20 @@
+{
+    "solution_0": {
+        "eps": 0.5871391670581438,
+        "min_samples": 2,
+        "n_components": 2,
+        "fitness_score": -100.0
+    },
+    "solution_1": {
+        "eps": 0.8801801589158038,
+        "min_samples": 3,
+        "n_components": 7,
+        "fitness_score": -500.0
+    },
+    "solution_2": {
+        "eps": 1.6150048228181015,
+        "min_samples": 7,
+        "n_components": 7,
+        "fitness_score": -500.0
+    }
+}

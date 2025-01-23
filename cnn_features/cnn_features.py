@@ -1,4 +1,5 @@
 from created_dataset import get_pieces_per_image
+from solution_to_pieces import get_solution_pieces
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -118,7 +119,7 @@ def plot_example_pieces(features_per_image, pieces_per_image, ax=None):
     ax.set_title('Example Pieces and Their Feature Vectors')
     return ax
 
-def visualize_features(features_per_image, pieces_per_image):
+def visualize_features(features_per_image, pieces_per_image=None):
     """Visualize features using PCA and feature vector comparisons"""
     print("\nVisualizing features...")
     
@@ -132,12 +133,14 @@ def visualize_features(features_per_image, pieces_per_image):
     plot_pca_visualization(features_per_image, len(features_per_image), pca_fig.add_subplot(111))
     plot_feature_vectors(features_per_image, vector_fig.add_subplot(111))
     plot_feature_distribution(features_per_image, dist_fig.add_subplot(111))
-    plot_example_pieces(features_per_image, pieces_per_image, examples_fig.add_subplot(111))
+    if pieces_per_image is not None:
+        plot_example_pieces(features_per_image, pieces_per_image, examples_fig.add_subplot(111))
     
     # Show all figures
     plt.show()
 
-def extract_features(pieces_per_image):
+def get_feature_extractor():
+    """Initialize and return the feature extractor model and preprocessing transforms"""
     print("\nInitializing feature extraction...")
     # Use MobileNetV2 which is one of the smallest pretrained models
     weights = MobileNet_V2_Weights.DEFAULT
@@ -149,26 +152,38 @@ def extract_features(pieces_per_image):
     print("Loading preprocessing transforms...")
     # Get the preprocessing transforms directly from the model weights
     preprocess = weights.transforms()
+    
+    return feature_extractor, preprocess
+
+def extract_features_from_pieces(pieces, feature_extractor, preprocess):
+    """Extract features from a list of pieces using the provided model"""
+    features = []
+    with torch.no_grad():
+        for piece in tqdm(pieces, desc="Processing pieces", leave=False):
+            # Transform piece using the model's preprocessing
+            # Add .copy() to handle negative strides in numpy array
+            piece_tensor = preprocess(torch.from_numpy(piece.copy()).permute(2, 0, 1) / 255.0).unsqueeze(0)
+            
+            # Extract features
+            piece_features = feature_extractor(piece_tensor)
+            # Flatten features
+            piece_features = piece_features.squeeze().flatten().numpy()
+            features.append(piece_features)
+            
+    return features
+
+def extract_features(pieces_per_image):
+    """Extract features from multiple images' worth of pieces"""
+    feature_extractor, preprocess = get_feature_extractor()
 
     features_per_image = []
     total_pieces = sum(len(pieces) for pieces in pieces_per_image)
     print(f"\nProcessing {len(pieces_per_image)} images with total {total_pieces} pieces...")
     
     start_time = time.time()
-    with torch.no_grad():
-        for i, pieces in enumerate(tqdm(pieces_per_image, desc="Processing images")):
-            image_features = []
-            for piece in tqdm(pieces, desc=f"Image {i+1} pieces", leave=False):
-                # Transform piece using the model's preprocessing
-                # Add .copy() to handle negative strides in numpy array
-                piece_tensor = preprocess(torch.from_numpy(piece.copy()).permute(2, 0, 1) / 255.0).unsqueeze(0)
-                
-                # Extract features
-                features = feature_extractor(piece_tensor)
-                # Flatten features
-                features = features.squeeze().flatten().numpy()
-                image_features.append(features)  # Store numpy array directly
-            features_per_image.append(image_features)
+    for i, pieces in enumerate(tqdm(pieces_per_image, desc="Processing images")):
+        image_features = extract_features_from_pieces(pieces, feature_extractor, preprocess)
+        features_per_image.append(image_features)
     
     elapsed_time = time.time() - start_time
     print(f"\nFeature extraction completed in {elapsed_time:.2f} seconds")
@@ -201,7 +216,19 @@ def save_features(features_per_image, labels_per_image):
         with open(output_path, 'w') as f:
             json.dump(output_data, f)
 
+def get_solution_features(solution_pieces):
+    feature_extractor, preprocess = get_feature_extractor()
+    pieces_features = extract_features_from_pieces(solution_pieces, feature_extractor, preprocess)
+    return pieces_features
+
 def main():
+    solution_index = 0
+    solution_pieces = get_solution_pieces(solution_index)
+    solution_features = get_solution_features(solution_pieces)
+    print(solution_features)
+    visualize_features([solution_features], None)
+    quit()
+    
     print("Loading image pieces...")
     num_images_to_load = 3  # Load only first 3 images for testing
     pieces_per_image, labels_per_image = get_pieces_per_image(num_images_to_load)
