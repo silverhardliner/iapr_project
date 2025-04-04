@@ -7,8 +7,11 @@ import numpy as np
 def get_solution_pieces(solution_index):
     path = Path(__file__).parent.parent / "data_project" / "train2_solutions"
     all_pieces = []
+    all_positions = []
+    labels = []
+    current_label = 0
     
-    # First collect all pieces
+    # Collect pieces and create labels
     for file in path.glob("*.png"):
         file_name = file.name
         parts = file_name.split("_")
@@ -22,9 +25,23 @@ def get_solution_pieces(solution_index):
                 
             # Split image into pieces
             pieces, positions = split_image(img)
-            all_pieces.extend(pieces)
             
-    return all_pieces
+            # If only one piece, mark as outlier (-1)
+            if len(pieces) == 1:
+                print(f"Found single piece in {file_name}, marking as outlier")
+                label = -1
+            else:
+                label = current_label
+                current_label += 1
+                
+            all_pieces.extend(pieces)
+            all_positions.extend(positions)
+            
+            # Add labels for this image's pieces
+            labels.extend([label] * len(pieces))
+    
+    print(f"labels: {labels}")
+    return all_pieces, np.array(labels)
 
 def plot_solution_images(solution_index):
     all_pieces = get_solution_pieces(solution_index)

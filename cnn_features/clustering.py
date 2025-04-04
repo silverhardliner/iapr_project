@@ -13,11 +13,14 @@ from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import euclidean_distances
 from tqdm import tqdm
+from sklearn.cluster import KMeans
 
 # Local imports
 from cnn_features import extract_features, get_solution_features
 from created_dataset import get_pieces_per_image
 from solution_to_pieces import get_solution_pieces
+
+VALID_CLUSTER_SIZES = {9, 12, 16}
 
 def get_features_dir():
     """Get the path to the features directory"""
@@ -123,7 +126,7 @@ def prepare_features(features_per_image, n_components):
     all_features_scaled = scaler.fit_transform(all_features_pca)
 
     print(f"Scaled feature statistics:")
-    print(f"Mean feature values: mean={np.mean(all_features_scaled):.3f}, std={np.std(all_features_scaled):.3f}")
+    print(f"Mean feature values: mean={np.mean(all_features_pca):.3f}, std={np.std(all_features_pca):.3f}")
     
     return all_features_scaled, pca, scaler
 
@@ -236,23 +239,28 @@ def plot_image_clusters(predicted_labels, pieces_per_image):
     plt.tight_layout()
     return fig
 
-def plot_2d_clusters(features_scaled, predicted_labels, pca=None):
+def plot_2d_clusters(features_scaled, predicted_labels, pca=None, true_labels=None, centers=None):
     """Plot 2D clustering results using PCA if needed"""
-    if features_scaled.shape[1] != 2:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    
+    # Convert features to 2D based on number of dimensions
+    if features_scaled.shape[1] == 1:
+        # For 1D data, plot feature values on x-axis and zeros on y-axis
+        features_2d = np.column_stack((features_scaled, np.zeros_like(features_scaled)))
+    elif features_scaled.shape[1] == 2:
+        # For 2D data, use features directly
+        features_2d = features_scaled
+    else:
+        # For 3D+ data, use PCA to reduce to 2D
         if pca is None:
-            # Create new PCA if not provided
             from sklearn.decomposition import PCA
             pca = PCA(n_components=2)
             features_2d = pca.fit_transform(features_scaled)
         else:
             # Use first 2 components of existing PCA
-            features_2d = features_scaled[:, :2]
-    else:
-        features_2d = features_scaled
-        
-    fig = plt.figure(figsize=(10, 8))
+            features_2d = pca.transform(features_scaled)[:, :2]
     
-    # Plot points for each cluster
+    # Plot predicted clusters
     unique_labels = np.unique(predicted_labels)
     colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_labels)))
     
@@ -260,17 +268,54 @@ def plot_2d_clusters(features_scaled, predicted_labels, pca=None):
         mask = predicted_labels == label
         if label == -1:
             # Plot noise points in black
-            plt.scatter(features_2d[mask, 0], features_2d[mask, 1], 
+            ax1.scatter(features_2d[mask, 0], features_2d[mask, 1], 
                        c='black', label='Noise', alpha=0.5, s=50)
         else:
-            plt.scatter(features_2d[mask, 0], features_2d[mask, 1], 
+            ax1.scatter(features_2d[mask, 0], features_2d[mask, 1], 
                        c=[color], label=f'Cluster {label}', alpha=0.7, s=50)
+            # Plot cluster center with same color if centers provided
+            if centers is not None:
+                if centers.shape[1] > 2:
+                    centers_2d = pca.transform(centers)[:, :2]
+                else:
+                    centers_2d = centers
+                ax1.scatter(centers_2d[label, 0], centers_2d[label, 1],
+                          c=[color], marker='x', s=200, linewidths=3)
     
-    plt.title('2D Visualization of Clusters (First Two Principal Components)')
-    plt.xlabel('First Principal Component')
-    plt.ylabel('Second Principal Component')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    ax1.set_title('Predicted Clusters')
+    if features_scaled.shape[1] == 1:
+        ax1.set_xlabel('Feature Value')
+        ax1.set_ylabel('Dimension 2 (zero)')
+    else:
+        ax1.set_xlabel('First Component')
+        ax1.set_ylabel('Second Component')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Plot true labels if provided
+    if true_labels is not None:
+        unique_true_labels = np.unique(true_labels)
+        colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_true_labels)))
+        
+        for label, color in zip(unique_true_labels, colors):
+            mask = true_labels == label
+            if label == -1:
+                ax2.scatter(features_2d[mask, 0], features_2d[mask, 1],
+                           c='black', label='Noise', alpha=0.5, s=50)
+            else:
+                ax2.scatter(features_2d[mask, 0], features_2d[mask, 1],
+                           c=[color], label=f'Puzzle {label}', alpha=0.7, s=50)
+        
+        ax2.set_title('True Labels')
+        if features_scaled.shape[1] == 1:
+            ax2.set_xlabel('Feature Value')
+            ax2.set_ylabel('Dimension 2 (zero)')
+        else:
+            ax2.set_xlabel('First Component')
+            ax2.set_ylabel('Second Component')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     return fig
 
@@ -344,9 +389,8 @@ def calculate_clustering_fitness(n_clusters, n_noise, cluster_sizes):
         return 1000.0  # Immediate large penalty for wrong number of clusters
         
     # Second priority: Check valid cluster sizes (must be 9, 12, or 16)
-    valid_sizes = {9, 12, 16}
     for size in cluster_sizes:
-        if size not in valid_sizes:
+        if size not in VALID_CLUSTER_SIZES:
             return 500.0  # Large penalty for any invalid cluster size
             
     # Third priority: Penalize for each noise point
@@ -365,7 +409,6 @@ def evaluate_solution_clustering(predicted_labels):
     print(f"Number of invalid noise points: {n_noise}")  # Updated message
     
     # Print size of each cluster and check if sizes match expectations
-    valid_sizes = {9, 12, 16}
     non_compliant = []
     cluster_sizes = []
     
@@ -377,7 +420,7 @@ def evaluate_solution_clustering(predicted_labels):
             print(f"Cluster {label}: {n_points} points")
             cluster_sizes.append(n_points)
             
-            if n_points not in valid_sizes:
+            if n_points not in VALID_CLUSTER_SIZES:
                 non_compliant.append((label, n_points))
     
     if not non_compliant:
@@ -401,186 +444,152 @@ def load_solution_params(solution_index):
     solution_params = params[f"solution_{solution_index}"]
     return solution_params["eps"], solution_params["min_samples"], solution_params["n_components"]
 
-def flexible_constrained_kmeans(X, max_noise=3, max_iters=100):
-    """
-    Perform K-means clustering with flexible constraints:
-    - 2-3 clusters of sizes 9, 12, or 16
-    - Up to max_noise points as noise
+def perform_clustering_kmeans(features_scaled):
+    """Perform K-means clustering with different numbers of clusters and evaluate"""
+    from sklearn.cluster import KMeans
     
-    Args:
-        X: feature matrix (n_samples, n_features)
-        max_noise: maximum number of noise points allowed (default 3)
-        max_iters: maximum number of iterations
+    # Try different numbers of clusters
+    k_range = [2, 3]  # Try 2 to 3 clusters
+    best_k = None
+    best_model = None
+    best_score = float('inf')
     
-    Returns:
-        labels: cluster assignments with -1 for noise points
-        fitness: score indicating how well constraints are met (lower is better)
-    """
-    n_samples = X.shape[0]
-    valid_sizes = {9, 12, 16}
-    
-    print(f"\nStarting flexible K-means clustering with {n_samples} samples")
-    print(f"Max noise points allowed: {max_noise}")
-    
-    # Try both 2 and 3 clusters
-    best_labels = None
-    best_fitness = float('inf')
-    
-    for n_clusters in [2, 3]:
-        print(f"\nTrying {n_clusters} clusters...")
+    print("\nEvaluating K-means with different cluster counts:")
+    for k in k_range:
+        kmeans = KMeans(n_clusters=k, random_state=42)
+        kmeans.fit(features_scaled)
+        predicted_labels = kmeans.predict(features_scaled)
         
-        # Initialize centroids using k-means++
-        centroids = np.zeros((n_clusters, X.shape[1]))
-        # Choose first centroid randomly
-        centroids[0] = X[np.random.randint(n_samples)]
+        # Calculate score based on maximum difference between cluster sizes and valid sizes
+        score = 0
+        for cluster_id in range(k):
+            cluster_size = np.sum(predicted_labels == cluster_id)
+            # Find distance to closest valid size
+            min_distance = min(abs(cluster_size - valid_size) for valid_size in VALID_CLUSTER_SIZES)
+            # Update score if this distance is larger than current score
+            score = max(score, min_distance)
+            
+        print(f"K={k}: Max size difference={score} (lower is better)")
         
-        # Choose remaining centroids
-        for k in range(1, n_clusters):
-            # Compute distances to closest centroid for each point
-            distances = np.min([np.sum((X - c) ** 2, axis=1) for c in centroids[:k]], axis=0)
-            # Choose next centroid with probability proportional to distance squared
-            probs = distances / distances.sum()
-            centroids[k] = X[np.random.choice(n_samples, p=probs)]
-        
-        # First check if any valid size combinations exist
-        remaining_points = n_samples - max_noise
-        valid_combinations = []
-        for sizes in itertools.combinations_with_replacement(valid_sizes, n_clusters):
-            if sum(sizes) == remaining_points:
-                valid_combinations.append(sizes)
-        
-        if not valid_combinations:
-            print(f"  No valid size combinations possible for {n_clusters} clusters")
-            continue  # Skip to next number of clusters
-            
-        print(f"  Valid size combinations found: {len(valid_combinations)}")
-        
-        for iter_num in range(max_iters):
-            # Calculate distances to centroids
-            distances = euclidean_distances(X, centroids)
-            
-            # Find potential noise points (furthest from all centroids)
-            min_distances = np.min(distances, axis=1)
-            noise_candidates = np.argsort(min_distances)[-max_noise:]
-            
-            # Initialize labels
-            labels = np.full(n_samples, -1)
-            
-            # Remove noise points from consideration
-            valid_indices = list(set(range(n_samples)) - set(noise_candidates))
-            
-            # Try different valid size combinations
-            valid_combinations = []
-            remaining_points = len(valid_indices)
-            
-            print(f"  Iteration {iter_num + 1}")
-            print(f"  Points after removing noise: {remaining_points}")
-            
-            # Generate valid size combinations
-            for sizes in itertools.combinations_with_replacement(valid_sizes, n_clusters):
-                if sum(sizes) == remaining_points:
-                    valid_combinations.append(sizes)
-            
-            print(f"  Valid size combinations found: {len(valid_combinations)}")
-            
-            for sizes in valid_combinations:
-                print(f"  Trying cluster sizes: {sizes}")
-                temp_labels = np.full(n_samples, -1)
-                remaining = set(valid_indices)
-                
-                # Assign points to clusters while respecting size constraints
-                for k in range(n_clusters):
-                    size = sizes[k]
-                    cluster_distances = distances[:, k]
-                    available = list(remaining)
-                    closest = sorted(available, 
-                                  key=lambda i: cluster_distances[i])[:size]
-                    
-                    temp_labels[closest] = k
-                    remaining -= set(closest)
-                
-                # Calculate fitness for this arrangement
-                fitness = calculate_clustering_fitness(
-                    n_clusters=n_clusters,
-                    n_noise=max_noise,
-                    cluster_sizes=[np.sum(temp_labels == k) for k in range(n_clusters)]
-                )
-                
-                print(f"  Fitness score: {fitness}")
-                
-                if fitness < best_fitness:
-                    best_fitness = fitness
-                    best_labels = temp_labels.copy()
-                    print(f"  New best fitness found: {fitness}")
-            
-            # Update centroids (excluding noise points)
-            new_centroids = np.zeros_like(centroids)
-            for k in range(n_clusters):
-                mask = best_labels == k
-                if np.any(mask):  # Only update if cluster is not empty
-                    new_centroids[k] = X[mask].mean(axis=0)
-                else:
-                    new_centroids[k] = centroids[k]  # Keep old centroid if cluster is empty
-            
-            # Check convergence
-            if np.allclose(centroids, new_centroids):
-                print("  Converged!")
-                break
-                
-            centroids = new_centroids
+        if score < best_score:
+            best_score = score
+            best_k = k
+            best_model = kmeans
     
-    print(f"\nFinal best fitness: {best_fitness}")
-    print(f"Final cluster sizes: {[np.sum(best_labels == k) for k in range(n_clusters)]}")
-    print(f"Noise points: {np.sum(best_labels == -1)}")
+    print(f"\nBest K-means model:")
+    print(f"Number of clusters: {best_k}")
+    print(f"Max size difference: {best_score}")
     
-    return best_labels, best_fitness
+    # Get initial predictions and centers
+    predicted_labels = best_model.predict(features_scaled)
+    centers = best_model.cluster_centers_
+    
+    # Adjust cluster sizes to match valid sizes
+    for cluster_id in range(best_k):
+        # Get points in this cluster
+        cluster_mask = predicted_labels == cluster_id
+        cluster_size = np.sum(cluster_mask)
+        cluster_points = features_scaled[cluster_mask]
+        
+        # Find closest valid size
+        valid_size = min(VALID_CLUSTER_SIZES, key=lambda x: abs(x - cluster_size))
+        
+        if cluster_size != valid_size:
+            # Calculate distances to cluster center
+            center = centers[cluster_id]
+            distances = np.linalg.norm(cluster_points - center, axis=1)
+            
+            # Sort points by distance
+            sorted_indices = np.argsort(distances)
+            
+            if cluster_size > valid_size:
+                # Need to remove points (mark as outliers)
+                points_to_remove = cluster_size - valid_size
+                # Get indices of points to mark as outliers
+                outlier_mask = np.zeros_like(predicted_labels, dtype=bool)
+                cluster_indices = np.where(cluster_mask)[0]
+                outlier_indices = cluster_indices[sorted_indices[-points_to_remove:]]
+                predicted_labels[outlier_indices] = -1
+                print(f"Cluster {cluster_id}: Removed {points_to_remove} points to reach size {valid_size}")
+            else:
+                print(f"Cluster {cluster_id}: Size {cluster_size} smaller than minimum valid size")
+    
+    return predicted_labels, centers
 
-def perform_clustering_v2(features_scaled, eps=None, min_samples=None):
-    """Updated clustering function using flexible constrained k-means"""
-    predicted_labels, fitness = flexible_constrained_kmeans(features_scaled)
+def evaluate_kmeans_results(predicted_labels, true_labels):
+    """Evaluate K-means clustering results against true labels"""
+    # Calculate metrics
+    ari_score = adjusted_rand_score(true_labels, predicted_labels)
+    ami_score = adjusted_mutual_info_score(true_labels, predicted_labels)
     
-    # Pretty print cluster information
-    unique_labels = set(predicted_labels)
-    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
-    n_noise = list(predicted_labels).count(-1)
+    # Print evaluation results
+    print("\nClustering Evaluation Results:")
+    print("------------------------------")
+    print(f"Number of pieces: {len(solution_pieces)}")
     
-    print("\nClustering Results:")
-    print(f"Number of clusters: {n_clusters}")
-    print(f"Number of noise points: {n_noise}")
-    print(f"Fitness score: {fitness}")
-    
-    for label in sorted(unique_labels):
+    # Print cluster sizes
+    unique_pred_labels = sorted(set(predicted_labels))
+    print("\nPredicted cluster sizes:")
+    for label in unique_pred_labels:
+        size = np.sum(predicted_labels == label)
         if label == -1:
-            print(f"\nNoise points: {n_noise}")
+            print(f"Noise points: {size}")
         else:
-            n_points = list(predicted_labels).count(label)
-            print(f"\nCluster {label}:")
-            print(f"  Number of points: {n_points}")
-            
-    return predicted_labels
-
+            print(f"Cluster {label}: {size} pieces")
+    
+    # Print true cluster sizes
+    unique_true_labels = sorted(set(true_labels))
+    print("\nTrue cluster sizes:")
+    for label in unique_true_labels:
+        size = np.sum(true_labels == label)
+        if label == -1:
+            print(f"Noise points: {size}")
+        else:
+            print(f"Puzzle {label}: {size} pieces")
+    
+    # Print confusion matrix-like information
+    print("\nCluster assignments:")
+    for true_label in unique_true_labels:
+        if true_label == -1:
+            continue
+        true_mask = true_labels == true_label
+        counts = []
+        for pred_label in unique_pred_labels:
+            pred_mask = predicted_labels == pred_label
+            overlap = np.sum(true_mask & pred_mask)
+            if overlap > 0:
+                counts.append(f"C{pred_label}:{overlap}")
+        print(f"Puzzle {true_label} pieces -> {', '.join(counts)}")
+    
+    print("\nMetrics:")
+    print(f"Adjusted Rand Index: {ari_score:.3f} (1.0 is perfect clustering)")
+    print(f"Adjusted Mutual Info: {ami_score:.3f} (1.0 is perfect clustering)")
+    
+    return true_labels
 
 if __name__ == "__main__":
     
-    num_images_to_load = 10  # Load only first 3 images for testing
-    solution_index = 0
-    eps, min_samples, n_components = load_solution_params(solution_index)
-    print("\nClustering Settings:")
-    print(f"Number of images: {num_images_to_load}")
-    print(f"PCA components:   {n_components}")
-    print(f"DBSCAN eps:       {eps}")
-    print(f"DBSCAN min_samples: {min_samples}")
-    print()
+    #num_images_to_load = 10  # Load only first 3 images for testing
+    solution_index = 1
+    #eps, min_samples, n_components = load_solution_params(solution_index)
+    #print("\nClustering Settings:")
+    #print(f"Number of images: {num_images_to_load}")
+    #print(f"PCA components:   {n_components}")
+    #print(f"DBSCAN eps:       {eps}")
+    #print(f"DBSCAN min_samples: {min_samples}")
+    #print()
 
-    solution_pieces = get_solution_pieces(solution_index)
+    solution_pieces, solution_labels = get_solution_pieces(solution_index)
     solution_features = get_solution_features(solution_pieces)
     # Prepare features with PCA and scaling
-    n_components = 3
+    n_components = 2
     all_features_scaled, pca, scaler = prepare_features(solution_features, n_components)
     print(f"all_features_scaled.shape: {all_features_scaled.shape}")
-    predicted_labels = perform_clustering_v2(all_features_scaled)
-    evaluate_solution_clustering(predicted_labels)
+    predicted_labels, centers = perform_clustering_kmeans(all_features_scaled)
+    true_labels = evaluate_kmeans_results(predicted_labels, solution_labels)
+    #evaluate_solution_clustering(predicted_labels)
     plot_solution_clustering(solution_pieces, predicted_labels)
+    plot_2d_clusters(all_features_scaled, predicted_labels, true_labels=solution_labels, centers=centers)
     plt.show()
     quit()
     
